@@ -1,0 +1,258 @@
+---
+title: "Data_824_Final_Project"
+author: "Dallin"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE, error=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Load the data and the libraries
+```{r}
+install.packages("corrplot")
+library(readr)
+library(tidyverse)
+library(ggplot2)
+library(car)
+library(caret)
+library(corrplot)
+house_data <- read_csv("~/Downloads/housing_price_dataset.csv", 
+    col_types = cols(SquareFeet = col_number(), 
+        Bedrooms = col_number(), Bathrooms = col_number(), 
+        YearBuilt = col_number(), Price = col_number()))
+house_data$Neighborhood <- as.factor(house_data$Neighborhood)
+house_data <- as.data.frame(house_data)
+View(house_data)
+```
+#Exploring and cleaning the data
+```{r}
+#Inspect data
+head(house_data)
+str(house_data)
+summary(house_data)
+unique(house_data$Neighborhood)
+
+#Clean data
+sum(is.na(house_data))
+#No missing data
+
+#Full model
+mod_all <- lm(Price~., house_data)
+summary(mod_all)
+
+#Analyze residuals of the model 
+residuals_all <- resid(mod_all)
+par(bg = "wheat")
+qqnorm(residuals_all, main = "Q-Q Plot of the Residuals")
+qqline(residuals_all)
+par(bg = "wheat")
+hist(residuals_all, 
+     main = "Distribution of Residuals", 
+     xlab = "Residuals",
+     col = "skyblue", 
+     breaks = 100)
+
+# Histograms for continuous variables
+par(bg = "wheat")
+hist(house_data$SquareFeet, 
+     main = "Distribution of Square Feet", 
+     xlab = "Square Footage",
+     col = "orange", 
+     breaks = 100)
+par(bg = "wheat")
+hist(house_data$Price/1000, 
+     main = "Distribution of Price", 
+     xlab = "Home Price (in thousands)",
+     col = "orange", 
+     breaks = 100)
+
+#Price looks normally distributed, here are some summary stats to show us more about the
+#distribution of the Price variable
+mean(house_data$Price)
+sd(house_data$Price)
+ks.test(house_data$Price, "pnorm", mean(house_data$Price), sd(house_data$Price))
+par(bg = "wheat")
+qqnorm(house_data$Price)
+qqline(house_data$Price, col = "red")
+
+#residuals are normally distributed
+
+# Barplots of categorical variables
+ggplot(house_data, mapping = aes(Bedrooms)) +
+  geom_bar(fill = "steelblue", color = "black") + 
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5) + 
+  labs(title = "Barplot of # of Bedrooms") + 
+  theme_classic() 
+
+ggplot(house_data, mapping = aes(Bathrooms)) +
+  geom_bar(fill = "steelblue", color = "black") + 
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5) + 
+  labs(title = "Barplot of # of Bathrooms") + 
+  theme_classic()
+
+ggplot(house_data, mapping = aes(Neighborhood)) +
+  geom_bar(fill = "steelblue", color = "black") + 
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5) + 
+  labs(title = "Barplot of Neighborhood") + 
+  theme_classic()
+
+#Density Plot of Houses by Year Built
+ggplot(house_data, aes(x = YearBuilt)) +
+  geom_density(fill = "lightblue", color = "darkblue", alpha = 0.7) +
+  labs(
+    title = "Density Plot of Houses by Year Built",
+    x = "Year Built",
+    y = "Density"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) 
+
+
+# Correlation Analysis 
+cor_matrix <- cor(house_data[, c("Bedrooms", "Bathrooms", "SquareFeet", "YearBuilt", "Price")], method = "spearman")
+print(cor_matrix)
+corrplot(cor_matrix)
+vif_model <- vif(mod_all)
+vif_model
+#all VIF numbers are relatively low which could indicate that no multicollinearity is occuring. 
+```
+#Feature selection and cross-validation using Linear Regression 
+```{r}
+#Based on the p-values for the t-statistics for the independent variables. It seems that we should fail to reject the null hypothesis for one of the categories in the Neighborhood variable and fail to reject the null hypothesis for the Year variable. However, these variables seem so important I will use cross-validation with and without these variables in multiple combinations to see if the results are better or worse depending on the combination of predictor variables.
+set.seed(123)
+control <- trainControl(method = "cv", number = 10)
+cv_results_full <- train(Price~., data = house_data, method = "lm", trControl = control)
+cv_results2 <- train(Price~SquareFeet+Bedrooms+Bathrooms+Neighborhood, data = house_data, method = "lm", trControl = control)
+cv_results3 <- train(Price~SquareFeet+Bedrooms+Bathrooms+YearBuilt, data = house_data, method = "lm", trControl = control)
+cv_results4 <- train(Price~SquareFeet+Bedrooms+Bathrooms, data = house_data, method = "lm", trControl = control)
+
+cv_results_full
+cv_results2
+cv_results3
+cv_results4
+
+#cv_results_full gave me  the 2nd lowest RMSE(by 0.17) and the second lowest MAE(0.46). It was so close to the model that did perform the best, the model without YearBuilt, but I want to use the full model since it has more varibales and I don't want to uninclude the yearbuilt variable, becasue I believe it is so important. 
+```
+#Elastic net feature selection and cross-validation
+```{r}
+set.seed(123)
+cv_results_full_en <- train(Price~., data = house_data, method = "glmnet", preProcess = c("center", "scale"), trControl = control)
+cv_results2_en <- train(Price~SquareFeet+Bedrooms+Bathrooms+Neighborhood, data = house_data, method = "glmnet", preProcess = c("center", "scale"), trControl = control)
+cv_results3_en <- train(Price~SquareFeet+Bedrooms+Bathrooms+YearBuilt, data = house_data, method = "glmnet", preProcess = c("center", "scale"), trControl = control)
+cv_results4_en <- train(Price~SquareFeet+Bedrooms+Bathrooms, data = house_data, method = "glmnet", preProcess = c("center", "scale"), trControl = control)
+
+cv_results_full_en
+cv_results2_en
+cv_results3_en
+cv_results4_en
+
+#cv_results2_en gave us the smallest RMSE at 49921.10
+```
+#Neural Network feature selection and cross-validation
+```{r}
+set.seed(123)
+cv_results_full_nn <- train(Price~., data = house_data, method = "nnet", preProcess = c("center", "scale"), trControl = control)
+cv_results2_nn <- train(Price~SquareFeet+Bedrooms+Bathrooms+Neighborhood, data = house_data, method = "nnet", preProcess = c("center", "scale"), trControl = control)
+cv_results3_nn <- train(Price~SquareFeet+Bedrooms+Bathrooms+YearBuilt, data = house_data, method = "nnet", preProcess = c("center", "scale"), trControl = control)
+cv_results4_nn <- train(Price~SquareFeet+Bedrooms+Bathrooms, data = house_data, method = "nnet", preProcess = c("center", "scale"), trControl = control)
+
+cv_results_full_nn
+cv_results2_nn
+cv_results3_nn
+cv_results4_nn
+#these models produced extremely high RMSE values. I'm guessing the neural networks probably overfit the data(which they are prone to do).
+```
+#Final Equation
+```{r}
+mod_all
+# Assuming a model with one predictor for simplicity
+# Price = Intercept + Slope * Predictor
+coef_mod <- coef(mod_all)
+coef_mod
+coef_mod[4]
+final_equation <- paste("Price = ", 
+                        round(coef_mod[1], 3), " + ", 
+                        round(coef_mod[2], 3), "* SquareFeet + ",
+                        round(coef_mod[3], 3), "* Bedrooms + ",
+                        round(coef_mod[4], 3), "* Bathrooms + ",
+                        round(coef_mod[5], 3), "* NeighborhoodSuburb + ",
+                        round(coef_mod[6], 3), "* NeighbrohoodUrban + ",
+                        round(coef_mod[7], 3), "* YearBuilt")
+final_equation
+predictions <- predict(mod_all, newdata = house_data)
+plot(house_data$Price, predictions, xlab = "actual values", ylab = "predicted values")
+summary(mod_all)
+```
+#Shiny app 
+```{r}
+library(shiny)
+
+ui <- fluidPage(
+    titlePanel("House Price Prediction"),
+
+    sidebarLayout(
+        sidebarPanel(
+            h3("Input Values"),
+            numericInput("squareFeet", "Square Feet", value = 1),
+            numericInput("bedrooms", "Number of Bedrooms", value = 1),
+            numericInput("bathrooms", "Number of Bathrooms", value = 1),
+            selectInput("neighborhood", "Neighborhood Type", choices = c("Suburb", "Urban", "Rural")),
+            numericInput("yearBuilt", "Year Built", value = 2000),
+            actionButton("calc", "Calculate Price")
+        ),
+        
+        mainPanel(
+            h3("Predicted House Price"),
+            verbatimTextOutput("predictedPrice")
+        )
+    )
+)
+
+server <- function(input, output) {
+    modelCoefficients <- c(Intercept = 23431.407,
+                           SquareFeet = 99.34,
+                           Bedrooms = 5074.435,
+                           Bathrooms = 2833.835,
+                           NeighborhoodSuburb = -675.494,
+                           NeighborhoodUrban = 1550.088,
+                           YearBuilt = -10.887)
+    calculatePrice <- reactive({
+        squareFeet <- input$squareFeet
+        bedrooms <- input$bedrooms
+        bathrooms <- input$bathrooms
+        neighborhood <- switch(input$neighborhood,
+                               "Suburb" = c(NeighborhoodSuburb = 1, NeighborhoodUrban = 0),
+                               "Urban" = c(NeighborhoodSuburb = 0, NeighborhoodUrban = 1),
+                               "Rural" = c(NeighborhoodSuburb = 0, NeighborhoodUrban = 0))
+        yearBuilt <- input$yearBuilt
+        price <- modelCoefficients["Intercept"] +
+                 modelCoefficients["SquareFeet"] * squareFeet +
+                 modelCoefficients["Bedrooms"] * bedrooms +
+                 modelCoefficients["Bathrooms"] * bathrooms +
+                 modelCoefficients["NeighborhoodSuburb"] * neighborhood["NeighborhoodSuburb"] +
+                 modelCoefficients["NeighborhoodUrban"] * neighborhood["NeighborhoodUrban"] +
+                 modelCoefficients["YearBuilt"] * yearBuilt
+        return(price)
+    })
+
+    output$predictedPrice <- renderText({
+        input$calc # Action button to trigger calculation
+        price <- calculatePrice()
+        paste("Predicted Price: $", formatC(price, format="f", digits=2))
+    })
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+
+
+
+
+
+
+
